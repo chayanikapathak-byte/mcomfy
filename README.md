@@ -1,57 +1,36 @@
-# ComfyPocket Integration Layer
+# ComfyPocket Core Integration
 
-This directory contains the core integration modules for ComfyPocket.
+Core modules for integrating with ComfyUI and external model hubs.
 
-## ComfyUI API Client (`index.ts`)
+## Modules
 
-A TypeScript client for interacting with the ComfyUI server via REST and WebSocket.
+### ComfyUI Client (`src/core/api-client.ts`)
+Handles WebSocket monitoring and REST API interactions with the ComfyUI server.
+- Real-time status, progress, and execution events.
+- Prompt submission and queue management.
+- System statistics and hardware monitoring.
 
-### Capabilities
-- **WebSocket Connection**: Real-time monitoring of generation progress and status.
-- **Queue Management**: Submit prompts, check queue status, interrupt execution.
-- **System Info**: Fetch hardware stats (VRAM usage, etc.).
-- **Node Info**: Fetch available node types and their definitions.
-- **Image Viewing**: Generate URLs for viewing generated assets.
+### Model Downloader
+Clients for browsing and downloading models from CivitAI and HuggingFace.
+- **CivitaiClient** (`src/core/civitai-client.ts`): Search and details for CivitAI models.
+- **HFClient** (`src/core/hf-client.ts`): Search and details for HuggingFace Hub models.
+- **DownloadManager** (`src/core/download-manager.ts`): UI-side tracking of model downloads.
 
-## API Research
+### Workflow Parser (`src/core/workflow-parser.ts`)
+Extracts ComfyUI workflow and prompt JSON from generated PNG images.
+- Supports both `tEXt` and `iTXt` PNG chunks.
+- Type-safe output matching `WorkflowGraph`.
 
-### ComfyUI REST Endpoints
-- `POST /prompt`: Submit a new generation.
-- `GET /queue`: Get pending and running items.
-- `GET /history`: Get past generations.
-- `GET /object_info`: Get node definitions.
-- `GET /view`: Retrieve generated images.
-- `POST /interrupt`: Stop current execution.
+## Usage
 
-### ComfyUI WebSocket (`/ws`)
-Messages are JSON with a `type` and `data` field.
-- `status`: Periodic queue status.
-- `progress`: Step-by-step progress for a node.
-- `executing`: Which node is currently running.
-- `executed`: When a node finishes and has UI output (like an image).
-- `execution_start`, `execution_success`, `execution_error`: Life-cycle events.
+```typescript
+import { ComfyUIClient } from './core/api-client';
 
-### CivitAI API
-- **Endpoint**: `https://civitai.com/api/v1`
-- **Model Search**: `GET /models`
-  - Query params: `query`, `tag`, `type`, `sort`, `period`, `limit`.
-- **Model Details**: `GET /models/:id`
-- **Model Version**: `GET /model-versions/:id`
-- **Hash Lookup**: `GET /model-versions/by-hash/:hash`
-- **Rate Limits**: 10,000 requests per day (unauthenticated), higher for authenticated.
-- **Download**: `GET /api/download/models/:versionId` (requires API Key in `Authorization: Bearer <key>` or as `token` query param).
-
-### HuggingFace Hub API
-- **Endpoint**: `https://huggingface.co/api`
-- **Model Search**: `GET /models`
-  - Query params: `search`, `filter`, `sort`, `limit`.
-- **Model Details**: `GET /models/:id`
-- **File Download**: `https://huggingface.co/:repo_id/resolve/:revision/:filename`
-- **Rate Limits**: Generous for public models; requires token for private/gated.
-
-### Workflow Metadata Parser
-ComfyUI embeds data in PNG `tEXt` or `iTXt` chunks:
-- `prompt`: The JSON prompt sent to the API.
-- `workflow`: The full ComfyUI graph JSON.
-
-Parsing can be done by reading PNG chunks and looking for these keys.
+const client = new ComfyUIClient({ serverAddress: 'http://localhost:8188' });
+client.onMessage((msg) => {
+  if (msg.type === 'progress') {
+    console.log(`Progress: ${msg.data.value}/${msg.data.max}`);
+  }
+});
+await client.connect();
+```
