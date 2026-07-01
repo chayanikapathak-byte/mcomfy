@@ -55,3 +55,4 @@ ComfyUI embeds data in PNG `tEXt` or `iTXt` chunks:
 - `workflow`: The full ComfyUI graph JSON.
 
 Parsing can be done by reading PNG chunks and looking for these keys.
+// Update
