@@ -1,57 +1,32 @@
-# ComfyPocket Integration Layer
+# React + TypeScript + Vite
 
-This directory contains the core integration modules for ComfyPocket.
+This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
 
-## ComfyUI API Client (`index.ts`)
+Currently, two official plugins are available:
 
-A TypeScript client for interacting with the ComfyUI server via REST and WebSocket.
+- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
+- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
 
-### Capabilities
-- **WebSocket Connection**: Real-time monitoring of generation progress and status.
-- **Queue Management**: Submit prompts, check queue status, interrupt execution.
-- **System Info**: Fetch hardware stats (VRAM usage, etc.).
-- **Node Info**: Fetch available node types and their definitions.
-- **Image Viewing**: Generate URLs for viewing generated assets.
+## React Compiler
 
-## API Research
+The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
 
-### ComfyUI REST Endpoints
-- `POST /prompt`: Submit a new generation.
-- `GET /queue`: Get pending and running items.
-- `GET /history`: Get past generations.
-- `GET /object_info`: Get node definitions.
-- `GET /view`: Retrieve generated images.
-- `POST /interrupt`: Stop current execution.
+## Expanding the Oxlint configuration
 
-### ComfyUI WebSocket (`/ws`)
-Messages are JSON with a `type` and `data` field.
-- `status`: Periodic queue status.
-- `progress`: Step-by-step progress for a node.
-- `executing`: Which node is currently running.
-- `executed`: When a node finishes and has UI output (like an image).
-- `execution_start`, `execution_success`, `execution_error`: Life-cycle events.
+If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
 
-### CivitAI API
-- **Endpoint**: `https://civitai.com/api/v1`
-- **Model Search**: `GET /models`
-  - Query params: `query`, `tag`, `type`, `sort`, `period`, `limit`.
-- **Model Details**: `GET /models/:id`
-- **Model Version**: `GET /model-versions/:id`
-- **Hash Lookup**: `GET /model-versions/by-hash/:hash`
-- **Rate Limits**: 10,000 requests per day (unauthenticated), higher for authenticated.
-- **Download**: `GET /api/download/models/:versionId` (requires API Key in `Authorization: Bearer <key>` or as `token` query param).
+```json
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["react", "typescript", "oxc"],
+  "options": {
+    "typeAware": true
+  },
+  "rules": {
+    "react/rules-of-hooks": "error",
+    "react/only-export-components": ["warn", { "allowConstantExport": true }]
+  }
+}
+```
 
-### HuggingFace Hub API
-- **Endpoint**: `https://huggingface.co/api`
-- **Model Search**: `GET /models`
-  - Query params: `search`, `filter`, `sort`, `limit`.
-- **Model Details**: `GET /models/:id`
-- **File Download**: `https://huggingface.co/:repo_id/resolve/:revision/:filename`
-- **Rate Limits**: Generous for public models; requires token for private/gated.
-
-### Workflow Metadata Parser
-ComfyUI embeds data in PNG `tEXt` or `iTXt` chunks:
-- `prompt`: The JSON prompt sent to the API.
-- `workflow`: The full ComfyUI graph JSON.
-
-Parsing can be done by reading PNG chunks and looking for these keys.
+See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
