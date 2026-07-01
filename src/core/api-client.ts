@@ -9,13 +9,16 @@ import {
   WorkflowGraph
 } from '../types/index.ts';
 
+export type MessageHandler = (msg: ComfyWSMessage) => void;
+export type StatusHandler = (status: ConnectionStatus) => void;
+
 export class ComfyUIClient {
   private config: ComfyUIClientConfig;
   private ws: WebSocket | null = null;
   private status: ConnectionStatus = 'disconnected';
   private clientId: string;
-  private listeners: Set<(status: ConnectionStatus) => void> = new Set();
-  private messageListeners: Set<(msg: ComfyWSMessage) => void> = new Set();
+  private statusListeners: Set<StatusHandler> = new Set();
+  private messageListeners: Set<MessageHandler> = new Set();
   private reconnectTimeout: any = null;
   private heartbeatInterval: any = null;
 
@@ -24,19 +27,23 @@ export class ComfyUIClient {
     this.clientId = config.clientId || crypto.randomUUID();
   }
 
-  public onStatusChange(callback: (status: ConnectionStatus) => void) {
-    this.listeners.add(callback);
-    return () => this.listeners.delete(callback);
+  public onStatusChange(callback: StatusHandler) {
+    this.statusListeners.add(callback);
+    return () => this.statusListeners.delete(callback);
   }
 
-  public onMessage(callback: (msg: ComfyWSMessage) => void) {
+  public onMessage(callback: MessageHandler) {
     this.messageListeners.add(callback);
     return () => this.messageListeners.delete(callback);
   }
 
   private setStatus(status: ConnectionStatus) {
     this.status = status;
-    this.listeners.forEach(l => l(status));
+    this.statusListeners.forEach(l => l(status));
+  }
+
+  public getStatus(): ConnectionStatus {
+    return this.status;
   }
 
   public async connect() {
@@ -66,21 +73,29 @@ export class ComfyUIClient {
             const data = JSON.parse(event.data);
             this.handleWSMessage(data);
           } catch (e) {
-            console.error('Failed to parse WS message', e);
+            // ComfyUI sometimes sends non-JSON messages (like heartbeats)
+            if (event.data !== 'pong') {
+              console.debug('Received non-JSON message:', event.data);
+            }
           }
         };
 
-        this.ws.onclose = () => {
+        this.ws.onclose = (event) => {
           this.stopHeartbeat();
           if (this.status !== 'disconnected') {
+            console.log(`WebSocket closed: ${event.code} ${event.reason}. Reconnecting...`);
             this.setStatus('reconnecting');
             this.scheduleReconnect();
           }
         };
 
         this.ws.onerror = (err) => {
+          console.error('WebSocket error:', err);
           this.setStatus('error');
-          reject(err);
+          // Don't reject if we're already connected, just let onclose handle it
+          if (this.status === 'connecting') {
+            reject(err);
+          }
         };
       } catch (e) {
         this.setStatus('error');
@@ -101,7 +116,13 @@ export class ComfyUIClient {
   private scheduleReconnect() {
     if (this.reconnectTimeout) clearTimeout(this.reconnectTimeout);
     this.reconnectTimeout = setTimeout(() => {
-      this.connect().catch(() => this.scheduleReconnect());
+      if (this.status === 'reconnecting' || this.status === 'error') {
+        this.connect().catch(() => {
+          if (this.status !== 'disconnected') {
+            this.scheduleReconnect();
+          }
+        });
+      }
     }, 5000);
   }
 
@@ -109,9 +130,7 @@ export class ComfyUIClient {
     this.stopHeartbeat();
     this.heartbeatInterval = setInterval(() => {
       if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-        // ComfyUI doesn't strictly need heartbeats from client usually, 
-        // but it keeps connection alive through proxies
-        this.ws.send('ping');
+        this.ws.send(JSON.stringify({ type: 'ping' }));
       }
     }, 30000);
   }
@@ -128,67 +147,66 @@ export class ComfyUIClient {
 
   // --- REST API Methods ---
 
+  private async fetchApi(path: string, options: RequestInit = {}) {
+    const res = await fetch(`${this.config.serverAddress}${path}`, options);
+    if (!res.ok) {
+      let errorMsg = `HTTP error! status: ${res.status}`;
+      try {
+        const err = await res.json();
+        errorMsg = err.error?.message || err.message || errorMsg;
+      } catch (e) { /* ignore */ }
+      throw new Error(errorMsg);
+    }
+    return res;
+  }
+
   public async getSystemStats(): Promise<SystemStats> {
-    const res = await fetch(`${this.config.serverAddress}/system_stats`);
-    if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+    const res = await this.fetchApi('/system_stats');
     return await res.json();
   }
 
-  public async submitPrompt(workflow: any, outputNodeId?: string): Promise<{ prompt_id: string; number: number }> {
+  public async submitPrompt(workflow: any): Promise<{ prompt_id: string; number: number }> {
     const body = {
       prompt: workflow,
       client_id: this.clientId,
     };
 
-    const res = await fetch(`${this.config.serverAddress}/prompt`, {
+    const res = await this.fetchApi('/prompt', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
     });
 
-    if (!res.ok) {
-      const err = await res.json();
-      throw new Error(err.error?.message || `HTTP error! status: ${res.status}`);
-    }
-
     return await res.json();
   }
 
   public async getQueue(): Promise<{ queue_running: any[]; queue_pending: any[] }> {
-    const res = await fetch(`${this.config.serverAddress}/queue`);
-    if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
-    return await res.json();
+    const res = await this.fetchApi('/queue');
+    const data = await res.json();
+    return data;
   }
 
   public async getHistory(promptId?: string): Promise<any> {
-    const url = promptId 
-      ? `${this.config.serverAddress}/history/${promptId}`
-      : `${this.config.serverAddress}/history`;
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+    const path = promptId ? `/history/${promptId}` : '/history';
+    const res = await this.fetchApi(path);
     return await res.json();
   }
 
   public async interrupt(): Promise<void> {
-    const res = await fetch(`${this.config.serverAddress}/interrupt`, { method: 'POST' });
-    if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+    await this.fetchApi('/interrupt', { method: 'POST' });
   }
 
   public async freeMemory(unloadModels: boolean = true, freeVram: boolean = true): Promise<void> {
-    const res = await fetch(`${this.config.serverAddress}/free`, {
+    await this.fetchApi('/free', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ unload_models: unloadModels, free_vram: freeVram })
     });
-    if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
   }
 
   public async getObjectInfo(nodeClass?: string): Promise<Record<string, any>> {
-    const url = nodeClass
-      ? `${this.config.serverAddress}/object_info/${nodeClass}`
-      : `${this.config.serverAddress}/object_info`;
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+    const path = nodeClass ? `/object_info/${nodeClass}` : '/object_info';
+    const res = await this.fetchApi(path);
     return await res.json();
   }
 
